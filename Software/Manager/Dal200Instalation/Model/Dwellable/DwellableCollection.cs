@@ -15,12 +15,17 @@ namespace Dal200Instalation.Model.Dwellable
 
         public readonly List<DwellableTarget> dwellableTargets;
         private readonly TimeSpan time;
-        private readonly int radius;
+        private int radius;
 
         public DwellableCollection(int toleranceRadius, TimeSpan detectionTimeSpan)
         {
             dwellableTargets = new List<DwellableTarget>();
             time = detectionTimeSpan;
+            radius = toleranceRadius;
+        }
+
+        public void ChangeRadius(int toleranceRadius)
+        {
             radius = toleranceRadius;
         }
 
@@ -35,7 +40,7 @@ namespace Dal200Instalation.Model.Dwellable
             var fileCollection = fileHelpers.ReadFile(filename);
             foreach (var entry in fileCollection)
             {
-                var target = new DwellableTarget(new Point(entry.x,entry.y));
+                var target = new DwellableTarget(new Point(entry.x,entry.y),entry.label,entry.type,entry.page);
                 AddTarget(target);
             }
         }
@@ -48,7 +53,7 @@ namespace Dal200Instalation.Model.Dwellable
                 {
                     if (target.DetectDwell(tracked, radius, time))
                     {
-                        var t = new Tracked(tracked.id, target.Position, "track", target.Label);
+                        var t = new Tracked(target.Page, target.Position, "track", target.Label);
                         OnDwellDetected?.Invoke(t);
                     }
                 }

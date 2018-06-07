@@ -1,12 +1,14 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Timers;
 using System.Threading.Tasks;
+using System.Windows.Media.Animation;
 using Dal200Instalation.Model.Dwellable;
 using Dal200Instalation.Utils;
 using Newtonsoft.Json;
+using Rug.Osc;
 using WebSocketSharp.Server;
 
 namespace Dal200Instalation.Model
@@ -17,33 +19,35 @@ namespace Dal200Instalation.Model
         public readonly KinetOSCHandler dtdtHandler;
         private readonly WebSocketServer wsServer;
         private readonly Dictionary<int, DtdtSubject> activeUsers;
-        private readonly DwellableCollection dwellableCollection;
+        public DwellableCollection DwellableCollection { get; private set; }
+
+        private JsonData oldTrackingData;
+        private int oldTargetId = -1;
+        public delegate void DataFiltered(OscPacket data);
+
+        public event DataFiltered OnDataFiltered;
         
         public Dal200Control(int dtdtPort, int dwellRadius, int dwellTime)
         {
             activeUsers = new Dictionary<int, DtdtSubject>();
-            dwellableCollection = new DwellableCollection(dwellRadius,TimeSpan.FromSeconds(dwellTime));
+            DwellableCollection = new DwellableCollection(dwellRadius,TimeSpan.FromSeconds(dwellTime));
+
+            oldTrackingData = new JsonData();
             
             dtdtHandler = new KinetOSCHandler(dtdtPort);
             dtdtHandler.OnDataReceived += DtdtDataReceived;
             dtdtHandler.StartReceiving();
-            
+
             wsServer = new WebSocketServer($"ws://{NetworkUtils.GetLocalIPAddress()}");
             wsServer.AddWebSocketService<Dall200Messages>("/Dal200");
             wsServer.Start();
         }
 
-<<<<<<< HEAD
-            fakeDwellTimer = new Timer(10 * 1000);
-            fakeDwellTimer.Elapsed += FakeDwellTimer_Elapsed;
-            fakeDwellTimer.Start();
-=======
         public Dal200Control(int dtdtPort, int dwellRadius, int dwellTime, string filename) : this(dtdtPort,
             dwellRadius, dwellTime)
         {
-            dwellableCollection.LoadTargetsFromFile(filename);
-            dwellableCollection.OnDwellDetected += DwellDetected;
->>>>>>> d2372d8655cf491686f00bc5f0efb0f0ee0dca39
+            DwellableCollection.LoadTargetsFromFile(filename);
+            DwellableCollection.OnDwellDetected += DwellDetected;
         }
 
         public void SendFakeDwell(int x, int y, string track, string mediaName)
@@ -63,17 +67,40 @@ namespace Dal200Instalation.Model
 
         private void DtdtDataReceived(Rug.Osc.OscPacket data)
         {
-            var positionData = dtdtHandler.StripPositionData();
+            var positionData = dtdtHandler.StripBlobPositionData();
+
+            for (int i = 0; i < positionData.trackerData.Count; i++)
+            {
+                var id = positionData.trackerData[i].id;
+                for (int j = 0; j < oldTrackingData.trackerData.Count; j++)
+                {
+                    if (id == oldTrackingData.trackerData[j].id)
+                    {
+                        positionData.trackerData[i].position = Point.expoAverage(oldTrackingData.trackerData[j].position,
+                            positionData.trackerData[i].position, 0.8f);
+                        break;
+                        
+                    }
+                }
+            }
+
             SendPositonData(positionData);
-            dwellableCollection.DetectDwell(positionData);
+            DwellableCollection.DetectDwell(positionData);
+
+            oldTrackingData = positionData;
             //UpdateActiveUsersDict(positionData);
 
         }
 
         private void DwellDetected(Tracked targetData)
         {
-            var data = new JsonData();
-            data.trackerData.Add(targetData);
+            if (targetData.id == oldTargetId)
+                return;
+            oldTargetId = targetData.id;
+            Console.WriteLine(targetData.id);
+
+            var data = new DwellData();
+            data.dwellIndex = targetData.id;
             wsServer.WebSocketServices["/Dal200"].Sessions.BroadcastAsync(JsonConvert.SerializeObject(data), null);
         }
 

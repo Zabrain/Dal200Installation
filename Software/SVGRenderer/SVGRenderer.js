@@ -9,9 +9,12 @@ var height;
 var cx;
 var cy;
 var socket = null;
+var connected = false;
+var connectionInterval = 60000;
 var trackerData = {};
 var targets = {};
-var distThresh = 5000;
+var paths = {};
+var distThresh = 1000;
 
 function init() {
     console.log('init!');
@@ -23,54 +26,77 @@ function init() {
     cx = width * 0.5;
     cy = height * 0.5;
 
-    identify();
+//    identify();
 
     if (navigator.onLine) {
         console.log("You are Online");
-    } else {
+    }
+    else {
         console.log("You are Offline");
     }
 
-    // Create a new WebSocket.
-    socket = new WebSocket('ws://134.190.155.223/Dal200');
-//    socket = new WebSocket('ws://192.168.0.107/Dal200');
-    socket.onopen = function(event) {
-        console.log("Connection established");
-        socket.send("SVG renderer "+id+" connected.");
+    function openWebSocket() {
+        console.log("   Trying to connect...");
+        // Create a new WebSocket.
+        socket = new WebSocket('ws://192.168.1.120/Dal200');
+        socket.onopen = function(event) {
+            console.log("Connection established");
+            socket.send("SVG renderer "+id+" connected.");
+            connected = true;
+        }
+        socket.onclose = function(event) {
+            console.log("Connection dropped, will try to reconnect in", connectionInterval/1000, "seconds");
+            connected = false;
+        }
+        socket.onmessage = function(event) {
+            let data = null;
+            if (event.data)
+                data = JSON.parse(event.data);
+            if (!data)
+                return;
+            if (data.trackerData) {
+                for (var i in data.trackerData) {
+                    updateTrackerData(data.trackerData[i].id,
+                                      convertCoords(data.trackerData[i].position));
+                }
+            }
+            else if (data.targets) {
+                for (var i in data.targets) {
+                    updateTarget(data.targets[i].UUID, convertCoords(data.targets[i].Position),
+                                 data.targets[i].Label, data.targets[i].Type);
+                }
+            }
+            else if (data.paths) {
+                for (var i in data.paths) {
+                    updatePath(data.paths[i].UUID, data.paths[i].source,
+                               data.paths[i].destination);
+                }
+            }
+            else if (data.command) {
+                switch (data.command) {
+                    case 'identify':
+                        identify();
+                        break;
+                }
+            }
+            else if (data.dwellIndex != null) {
+//                console.log('dwellIndex:', data.dwellIndex);
+            }
+        }
     }
-    socket.onmessage = function(event) {
-//        console.log("message received:", event);
-        let data = null;
-        if (event.data)
-            data = JSON.parse(event.data);
-        if (!data)
+
+    // open webSocket
+    openWebSocket();
+
+    // check the websocket periodically
+    setInterval(function() {
+        console.log("checking websocket...");
+        if (connected == true) {
+            console.log("   Socket ok.");
             return;
-//        console.log(data);
-        if (data.trackerData) {
-            for (var i in data.trackerData) {
-                updateTrackerData(data.trackerData[i].id,
-                                  data.trackerData[i].position);
-            }
         }
-        else if (data.targets) {
-            console.log(data);
-            for (var i in data.targets) {
-                updateTarget(data.targets[i].UUID, data.targets[i].Position,
-                             data.targets[i].Label);
-            }
-        }
-        else if (data.command) {
-            console.log(data);
-            switch (data.command) {
-                case 'identify':
-                    identify();
-                    break;
-            }
-        }
-        else {
-            console.log('unknown message:', data);
-        }
-    }
+        openWebSocket();
+    }, connectionInterval);
 
     $('body').on('keydown.list', function(e) {
         switch (e.which) {
@@ -86,9 +112,62 @@ function init() {
         }
     })
 
-        // debugging: add a couple of targets
-    updateTarget(0, randomCoord(), "category 1");
-    updateTarget(1, randomCoord(), "category 2");
+    // debugging: add a couple of targets
+//    updateTarget(0, randomCoord(), "category 1", 1);
+//    updateTarget(1, randomCoord(), "category 2", 0);
+//
+//    updatePath(3, 0, 1);
+
+//    function makeSteps(num) {
+//        let steps = [];
+//        for (var i = 0; i < num; i++) {
+//            let path = canvas.path([['M', 0, 0],
+//                                    ['l', 0, 500]])
+//                             .attr({'stroke-width': 30,
+//                                    'stroke': 'white'})
+//                             .rotate(-5)
+//                             .translate(220 + i * 40, 165);
+//            steps.push(path);
+//        }
+//    }
+//
+//    makeSteps(9);
+
+//    // step 1
+//    canvas.path([['M', 0, 0],
+//                 ['l', 0, 500]])
+//          .attr({'stroke-width': 30,
+//                 'stroke': Raphael.getColor()})
+//          .rotate(-5)
+//          .translate(220, 165);
+//
+//    canvas.circle(300, 500, 40).attr({'fill': 'white',
+//                                      'fill-opacity': 1,
+//                                      'stroke-width': 10,
+//                                      'opacity': 1});
+}
+
+function convertCoords(pos) {
+    let offset = {'x': 10, 'y': -250};
+    let scale = {'x': 2.25, 'y': 2.5};
+//    let offset = {'x': 400, 'y': -320};
+//    let scale = {'x': 2.4, 'y': 2.5};
+//    let offset = {'x': -1110, 'y': -340};
+//    let scale = {'x': 1.68, 'y': 2.9};
+
+    let x = pos.x * scale.x + offset.x;
+    let y = pos.y * scale.y + offset.y;
+
+    x = 512 - x + 750;
+
+    if (pos.x > 465)
+        x -= 45;
+
+    // added y-offset to compensate for projector clamp slipping
+    x -= 20;
+    y -= 50;
+
+    return {'x': x, 'y': y};
 }
 
 function identify() {
@@ -115,13 +194,14 @@ function circlePath(pos, r1, r2, a) {
             ['z']];
 }
 
-function manhattan(pos1, pos2) {
+function distSquared(pos1, pos2) {
     let distX = pos1.x - pos2.x;
     let distY = pos1.y - pos2.y;
     return distX * distX + distY * distY;
 }
 
 function updateTrackerData(id, pos) {
+//    pos.x = 512 - pos.x + 750;
     if (!trackerData[id]) {
         trackerData[id] = canvas.circle(pos.x, pos.y, 40)
                                 .attr({'stroke': 'white',
@@ -132,7 +212,10 @@ function updateTrackerData(id, pos) {
         trackerData[id].animationFrame = 0;
     }
     trackerData[id].stop();
-    trackerData[id].animate({'r': trackerData[id].animationFrame, 'opacity': 1},
+//    console.log('placing tracker', id, 'at', pos);
+    trackerData[id].animate({'cx': pos.x,
+                             'cy': pos.y,
+                             'r': trackerData[id].animationFrame, 'opacity': 1},
                            300, 'linear', function() {
         this.animate({'opacity': 0}, 10000, '>', function() {
             trackerData[this.data('id')] = null;
@@ -144,34 +227,77 @@ function updateTrackerData(id, pos) {
 
     // check if we are close to any targets
     for (var i in targets) {
-        let dist = manhattan(pos, targets[i].data('pos'));
+        let dist = distSquared(pos, targets[i].data('pos'));
 //        console.log(id, i, dist);
-        if (dist < distThresh) {
-            console.log('tracker', id, 'proximate to target', i);
-            if (targets[i].sel < 255)
-                targets[i].sel++;
-        }
-        else if (targets[i].sel > 0)
-            targets[i].sel--;
-        let color = targets[i].sel;
-        targets[i].attr({'fill': Raphael.rgb(255, 255-color, 255-color)});
+        targets[i].attr({'stroke-opacity': dist < distThresh ? 1 : 0});
+//        if (dist < distThresh) {
+////            console.log('tracker', id, 'proximate to target', i);
+//            targets[i].attr({'stroke-opacity': 1});
+//            if (targets[i].sel < 255)
+//                targets[i].sel++;
+//        }
+//        else if (targets[i].sel > 0)
+//            targets[i].sel--;
+//        let opacity = targets[i].sel / 255;
+//        targets[i].attr({'stroke-opacity': opacity});
     }
 }
 
-function updateTarget(id, pos, label) {
+function updateTarget(id, pos, label, type) {
     if (!targets[id]) {
-        targets[id] = canvas.path([['M', pos.x, pos.y]]);
-        targets[id].label = canvas.text(pos.x, pos.y, label);
+        targets[id] = canvas.circle(0, 0, 30 + (pos.x) * 0.04);
+        targets[id].label = canvas.text(pos.x, pos.y, label)
+                                  .rotate(90);
         targets[id].sel = 0;
     }
+//    console.log('placing target', id, 'at', pos);
+    targets[id].attr({'cx': pos.x, 'cy': pos.y});
     targets[id].data({'pos': pos});
-    targets[id].animate({'path': circlePath(pos, 50),
-                         'fill': 'white'});
+    let color;
+    switch (type) {
+        case 0:
+            color = '#FFBBBB';
+            break;
+        case 1:
+            color = '#BBFFBB';
+            break;
+        case 2:
+            color = '#BBBBFF';
+            break;
+        default:
+            color = '#FFFFFF';
+            break;
+    }
+
+    targets[id].animate({'fill': color, 'stroke': 'white', 'stroke-opacity': 0, 'stroke-width': 10});
     targets[id].label.animate({'x': pos.x,
-                              'y': pos.y,
-                              'stroke': 'black',
-                              'font-size': 16});
+                               'y': pos.y,
+                               'stroke': 'black',
+                               'font-size': 16});
 //    console.log(targets);
 }
 
-
+function updatePath(id, src, dst) {
+    src = targets[src];
+    dst = targets[dst];
+    if (!src) {
+        console.log('missing src target for path', id);
+        return;
+    }
+    if (!dst) {
+        console.log('missing dst target for path', id);
+        return;
+    }
+    if (!paths[id]) {
+        console.log('adding path');
+        paths[id] = canvas.path([['M', src.pos.x, src.pos.y]])
+                          .attr({'stroke-dasharray': '.'})
+                          .toBack();
+    }
+    paths[id].animate({'path': [['M', src.pos.x, src.pos.y],
+                                ['S', src.pos.x, dst.pos.y, dst.pos.x, dst.pos.y]],
+//                                ['L', dst.pos.x, dst.pos.y]],
+                       'stroke': 'white',
+                       'stroke-width': 10
+                      });
+}
